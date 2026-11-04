@@ -27,6 +27,9 @@ const api = window.shellAPI || {
   // 桌面通知浮窗（无桥时的空实现）
   toast: () => Promise.resolve(false),
   onOpenSession: () => {},
+  onCallHotkey: () => {},
+  getCallHotkey: () => Promise.resolve("Alt+V"),
+  setCallHotkey: () => Promise.resolve(false),
 };
 
 // DOM 核心节点索引
@@ -122,6 +125,25 @@ api.onOpenSession?.((sessionId) => {
   } catch { /* 无法投递：主窗已唤起，用户可手动切会话 */ }
 });
 
+// ---------- 语音通话全局热键（dsh-seeker-bot） ----------
+// OS 级：主进程 globalShortcut 命中后推 shell:call-hotkey，这里转交 iframe。
+api.onCallHotkey?.(() => {
+  try { frame?.contentWindow?.postMessage({ type: "dsh:call-hotkey" }, "*"); } catch { /* iframe 未就绪 */ }
+});
+// 窗口级兜底：焦点落在标题栏时按键不会进 iframe，把带修饰键的按键转过去，
+// 由插件用同一份偏好匹配（globalShortcut 成功时按键已被主进程吃掉，不会重复）。
+window.addEventListener("keydown", (e) => {
+  if (e.repeat || e.defaultPrevented) return;
+  if (!(e.ctrlKey || e.altKey || e.shiftKey || e.metaKey)) return;
+  try {
+    frame?.contentWindow?.postMessage({
+      type: "dsh:hotkey-down",
+      key: e.key, code: e.code,
+      ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey,
+    }, "*");
+  } catch { /* iframe 未就绪 */ }
+});
+
 // 壳 chrome（非 iframe）上一律右键静默：主进程已 preventDefault，这里再兜一层，
 // 确保顶栏区域右键既没有壳菜单也没有 Chromium 的「检查 / 打印 / 全屏」。
 // 注意本监听只作用于壳页面自身文档，iframe 里 Web UI 的原生右键菜单完全不受影响。
@@ -148,6 +170,10 @@ if (window.matchMedia) {
 window.addEventListener("message", (event) => {
   const data = event.data;
   if (!data) return;
+  // 插件在 iframe 里改了快捷键 → 转给主进程重新注册 OS 级热键
+  if (data.type === "dsh:set-call-hotkey" && typeof data.accelerator === "string" && event.source === frame?.contentWindow) {
+    api.setCallHotkey?.(data.accelerator);
+  }
   if (data.type === "dsh:theme" || data.type === "dsh:theme-change") {
     const theme = data.theme || data.colorScheme;
     if (theme === "light" || theme === "dark") {

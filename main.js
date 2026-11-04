@@ -14,7 +14,7 @@
 //   记录在 userData/safe-boot.json，托盘可查看/恢复
 // - 单实例：重复启动时聚焦已有窗口
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, ipcMain, WebContentsView, shell, session, net } = require("electron");
+const { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, ipcMain, WebContentsView, shell, session, net, globalShortcut } = require("electron");
 const { spawn, exec, execSync, execFileSync } = require("node:child_process");
 const path = require("node:path");
 const http = require("node:http");
@@ -1645,6 +1645,29 @@ function createWindow() {
       else { logLine("[shell] 快捷键：刷新（Ctrl+R）"); console.log("[shell] 快捷键：刷新（Ctrl+R）"); reloadPage(); }
     }
   });
+
+  // ---------- 语音通话全局热键（dsh-seeker-bot） ----------
+  // OS 级：globalShortcut 在窗口没焦点 / 人在别的软件里也能拦到；命中后把事件
+  // 推给壳页，由 renderer.js 用 postMessage 转交 WebUI iframe 里的插件。
+  // 页面内另有两路兜底（iframe keydown / topbar 转发），三路在插件侧 350ms 去重。
+  let callHotkeyAcc = "Ctrl+Alt+V";
+  const fireCallHotkey = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try { mainWindow.webContents.send("shell:call-hotkey"); } catch { /* 窗口已销毁 */ }
+  };
+  function registerCallHotkey(acc) {
+    if (typeof acc !== "string" || !/^[A-Za-z0-9+]+$/u.test(acc) || acc.length > 40) return false;
+    try {
+      globalShortcut.unregister(callHotkeyAcc);
+      const ok = globalShortcut.register(acc, fireCallHotkey);
+      if (ok) { callHotkeyAcc = acc; return true; }
+      globalShortcut.register(callHotkeyAcc, fireCallHotkey);
+      return false;
+    } catch { return false; }
+  }
+  registerCallHotkey(callHotkeyAcc);
+  global.__dshSetCallHotkey = registerCallHotkey;
+  global.__dshGetCallHotkey = () => callHotkeyAcc;
   mainWindow.on("closed", () => { mainWindow = null; });
 
   // 记忆用户拖拽调整的窗口尺寸与位置（防抖保存）
@@ -2316,6 +2339,10 @@ function logLine(msg) {
 // ---------- IPC：主题 ----------
 ipcMain.handle("shell:get-theme", () => (nativeTheme.shouldUseDarkColors ? "dark" : "light"));
 
+// 语音通话快捷键：插件在 iframe 里改键 → 壳页 postMessage → 这里重新注册 OS 级热键。
+ipcMain.handle("shell:get-call-hotkey", () => (global.__dshGetCallHotkey ? global.__dshGetCallHotkey() : "Ctrl+Alt+V"));
+ipcMain.handle("shell:set-call-hotkey", (_e, acc) => Boolean(global.__dshSetCallHotkey && global.__dshSetCallHotkey(acc)));
+
 // update.mjs 定位：开发机直接跑源码树里的原文件（ROOT_DIR = 源码根，插件树可用）；
 // 运行时模式下 asar 内的脚本 node 无法直接执行，抽一份副本到 userData 根——
 // 副本的 import.meta.dirname = userData，正好让 update.mjs 的 RUNTIME_DIR 落在
@@ -2659,6 +2686,7 @@ app.on("window-all-closed", () => { /* 保持托盘运行 */ });
 
 app.on("before-quit", () => {
   quitting = true;
+  try { globalShortcut.unregisterAll(); } catch { /* 已注销 */ }
   persistWindowBounds();
   if (stopServiceOnQuit) {
     killPort3080();

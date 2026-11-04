@@ -57,4 +57,8 @@ contextBridge.exposeInMainWorld("shellAPI", {
   toast: (payload) => ipcRenderer.invoke("shell:show-toast", payload),
   // 浮窗被点击后要跳的会话：壳页面转交给 WebUI（见 renderer.js）
   onOpenSession: (cb) => ipcRenderer.on("shell:open-session", (_e, sessionId) => cb(sessionId)),
+  // 语音通话全局热键：主进程命中 → 壳页转发给 WebUI iframe（见 renderer.js）
+  onCallHotkey: (cb) => ipcRenderer.on("shell:call-hotkey", () => cb()),
+  getCallHotkey: () => ipcRenderer.invoke("shell:get-call-hotkey"),
+  setCallHotkey: (acc) => ipcRenderer.invoke("shell:set-call-hotkey", acc),
 });
