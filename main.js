@@ -68,10 +68,13 @@ function userLogDir() {
   try { fs.mkdirSync(d, { recursive: true }); } catch { /* 忽略 */ }
   return d;
 }
-// 开发机旧布局常量：仅为兼容保留，别人电脑上不存在，自动落到用户级目录
+// 开发机旧布局常量：只为兼容老机器保留，**只在用户级 runtime 缺失时才回退**。
+// 新装一律落到用户级目录（见 userRuntimeDir），别人电脑上根本不会有这个路径。
 const LEGACY_DSH_DIR = "D:\\AI\\Dsh\\dsh-runtime";
-// 与 dsh-runtime/package.json 的 @deepseek-ai/dsh 版本保持同步
-const DSH_VERSION = "0.1.7-rc.1";
+// 首次部署时装哪个版本的 @deepseek-ai/dsh（npm 的 latest 稳定线）。
+// 注意：这个值只决定「新部署」和「已有部署的升级目标」，用户已装版本由
+// runtime/package.json 里的 dependencies 记录，见 deployRuntime。
+const DSH_VERSION = "0.2.1-rc.5";
 // npm 源顺序：镜像优先（实测国内 512 个包 31 秒装完；官方源常要数分钟），
 // rc 版本镜像未同步时自动回退官方源兜底。
 const NPM_REGISTRIES = ["https://registry.npmmirror.com", "https://registry.npmjs.org"];
@@ -80,16 +83,27 @@ const RUNTIME_DISK_HINT = "首次启动需拉取运行时组件（约 600 MB 磁
 
 function dshBinIn(dir) { return path.join(dir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"); }
 function dshLayoutRoot() {
-  // 布局根 = runtime 的上一级（开发机：D:\AI\Dsh；运行时模式：userData）
+  // 布局根 = runtime 的上一级（用户级：userData；老机器 legacy：D:\AI\Dsh）
+  if (fs.existsSync(dshBinIn(userRuntimeDir()))) return userDataDir();
   if (fs.existsSync(dshBinIn(LEGACY_DSH_DIR))) return path.dirname(LEGACY_DSH_DIR);
   return userDataDir();
 }
-// 每次调用都重新探测：部署前是 missing，部署后要能立刻变成可用
+// 每次调用都重新探测：部署前是 missing，部署后要能立刻变成可用。
+// 顺序：用户级优先，legacy 只作兜底 —— 这样开发机迁到默认位置后不会继续吃旧目录。
 function resolveDshDir() {
-  if (fs.existsSync(dshBinIn(LEGACY_DSH_DIR))) return { dir: LEGACY_DSH_DIR, source: "legacy" };
   const userDir = userRuntimeDir();
   if (fs.existsSync(dshBinIn(userDir))) return { dir: userDir, source: "user" };
+  if (fs.existsSync(dshBinIn(LEGACY_DSH_DIR))) return { dir: LEGACY_DSH_DIR, source: "legacy" };
   return { dir: userDir, source: "missing" };
+}
+// 实际装着的引擎版本（读 node_modules 里的 package.json，读不到才回退到常量）
+function installedDshVersion() {
+  try {
+    const p = path.join(resolveDshDir().dir, "node_modules", "@deepseek-ai", "dsh", "package.json");
+    const v = JSON.parse(fs.readFileSync(p, "utf8")).version;
+    if (v) return v;
+  } catch { /* 未安装 / 文件损坏：回退常量 */ }
+  return DSH_VERSION;
 }
 function dshDir() { return resolveDshDir().dir; }
 function dshBin() { return dshBinIn(dshDir()); }
@@ -2156,7 +2170,7 @@ function inspectRuntime() {
   const layout = resolveDshDir();
   return {
     node: { ok: !!node, path: node },
-    runtime: { ok: layout.source !== "missing", dir: layout.dir, source: layout.source, version: DSH_VERSION },
+    runtime: { ok: layout.source !== "missing", dir: layout.dir, source: layout.source, version: installedDshVersion(), wantVersion: DSH_VERSION },
     plugins: inspectPlugins(),
     safeBoot: safeBootSnapshot(),
     logs: { dir: userLogDir(), shell: shellLogPath(), serviceOut: svcOutLogPath(), serviceErr: svcErrLogPath() },
@@ -2210,21 +2224,26 @@ function runNpmInstall(cwd, registry, onEvent) {
     });
   });
 }
-// 部署 runtime 到 %APPDATA%\DeepSeek Harness\runtime：先写锁版本 package.json，
-// 再依次尝试 npm 源（官方 → 国内镜像）。
+// 部署 runtime 到用户级目录 %APPDATA%\<appName>\runtime：先写锁版本 package.json，
+// 再依次尝试 npm 源（国内镜像 → 官方）。
+//
+// ⚠ package.json 里的 dependencies **必须按 DSH_VERSION 重写**，不能「不存在才写」：
+// 老版本只在文件缺失时写一次，结果用户装过一次之后版本就被永久钉死，换新版壳也升不上去。
 async function deployRuntime(onEvent) {
   const target = userRuntimeDir();
   try { fs.mkdirSync(target, { recursive: true }); }
   catch (e) { return { ok: false, error: `创建运行环境目录失败: ${(e && e.message) || e}` }; }
   const pkgPath = path.join(target, "package.json");
-  if (!fs.existsSync(pkgPath)) {
-    try {
-      fs.writeFileSync(pkgPath, JSON.stringify({
-        name: "dsh-runtime", version: "1.0.0", private: true,
-        dependencies: { "@deepseek-ai/dsh": DSH_VERSION },
-      }, null, 2) + "\n");
-    } catch (e) { return { ok: false, error: `写入 package.json 失败: ${(e && e.message) || e}` }; }
-  }
+  try {
+    let pkg = {};
+    try { pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")); } catch { pkg = {}; }
+    if (!pkg || typeof pkg !== "object") pkg = {};
+    pkg.name = pkg.name || "dsh-runtime";
+    pkg.version = pkg.version || "1.0.0";
+    pkg.private = true;
+    pkg.dependencies = { ...(pkg.dependencies || {}), "@deepseek-ai/dsh": DSH_VERSION };
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+  } catch (e) { return { ok: false, error: `写入 package.json 失败: ${(e && e.message) || e}` }; }
   const errors = [];
   for (const registry of NPM_REGISTRIES) {
     onEvent({ type: "status", percent: 88, text: "正在部署 DSH 运行时组件…", ticker: `npm install @deepseek-ai/dsh@${DSH_VERSION}（${registry === "https://registry.npmmirror.com" ? "镜像源" : "官方源"}）· ${RUNTIME_DISK_HINT}` });

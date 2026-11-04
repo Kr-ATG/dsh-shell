@@ -20,7 +20,12 @@
 
 到 [Releases](https://github.com/Kr-ATG/dsh-shell/releases) 下载 `DeepSeek-Harness-<版本>.msi` 安装即可（按用户安装，不需要管理员权限）。
 
-首次启动会自动体检运行环境：缺 Node.js 会提示安装，缺 DSH 运行时会在 `%APPDATA%\DeepSeek Harness\runtime` 现场部署。
+首次启动会自动体检运行环境：
+
+- 缺 **Node.js 22 LTS** 会弹提示（需要自己装，壳子不代装）；
+- 缺 **DSH 运行时**会在 `%APPDATA%\dsh-shell\runtime` 现场 `npm install`（先走 npmmirror 镜像，失败回退官方源，约 600 MB）。
+
+引擎版本由壳里的 `DSH_VERSION` 决定（当前 `0.2.1-rc.5`，npm `latest` 稳定线）。已有部署会在换新版壳时按该常量自动对齐，也可以从界面里手动「一键更新」到 npm / GitHub 上的更新版本。
 
 ## 开发
 

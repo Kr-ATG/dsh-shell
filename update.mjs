@@ -13,7 +13,19 @@ import { join, resolve } from "node:path";
 import { execSync } from "node:child_process";
 
 const ROOT_DIR = resolve(import.meta.dirname ?? process.cwd());
-const RUNTIME_DIR = join(ROOT_DIR, "dsh-runtime");
+// 运行时目录有两种布局，必须按实际存在的那个选：
+//   · 用户级（壳子默认）：%APPDATA%\<appName>\runtime —— 壳子会把本脚本复制到 userData 根，
+//     所以 ROOT_DIR = userData，runtime 就在它下面的 runtime/；
+//   · 开发机旧布局：源码根下的 dsh-runtime/。
+// 早先这里写死 dsh-runtime，导致用户级部署点「一键更新」会把新版本装到没人读的目录里。
+const RUNTIME_DIR = (() => {
+  const binOf = (d) => join(d, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
+  const userLayout = join(ROOT_DIR, "runtime");
+  const devLayout = join(ROOT_DIR, "dsh-runtime");
+  if (existsSync(binOf(userLayout))) return userLayout;
+  if (existsSync(binOf(devLayout))) return devLayout;
+  return userLayout; // 都没装过：按用户级布局创建
+})();
 
 const isStreamJson = process.argv.includes("--stream-json");
 const isCheckJson = process.argv.includes("--check-json");
@@ -113,6 +125,7 @@ async function getVersions() {
   const sources = [];
   let timeObj = null;
   let githubRel = null;
+  let stableLatest = ""; // npm dist-tags.latest：官方认定的「稳定可装」版本
 
   // 1. 优先尝试直连官方 npm 仓库获取第一手版本信息（规避镜像同步滞后问题，3.5s 超时）
   try {
@@ -125,6 +138,7 @@ async function getVersions() {
       sources.push("npm-official");
       if (doc["dist-tags"] && typeof doc["dist-tags"] === "object") {
         candidateList.push(...Object.values(doc["dist-tags"]).filter(Boolean));
+        if (doc["dist-tags"].latest) stableLatest = String(doc["dist-tags"].latest);
       }
       if (doc.versions && typeof doc.versions === "object") {
         candidateList.push(...Object.keys(doc.versions));
@@ -186,6 +200,7 @@ async function getVersions() {
       const distTags = JSON.parse(rawTags);
       if (distTags && typeof distTags === "object") {
         candidateList.push(...Object.values(distTags).filter(Boolean));
+        if (!stableLatest && distTags.latest) stableLatest = String(distTags.latest);
       }
     } catch {}
 
@@ -203,16 +218,28 @@ async function getVersions() {
     } catch {}
   } catch {}
 
+  // 稳定线优先：官方把「稳定可装」的版本挂在 dist-tags.latest 上，而 versions 里还混着
+  // alpha / beta 预发布（实测 0.2.2-alpha.3 的版本号比 latest 的 0.2.1-rc.5 还大）。
+  // 直接取「最大版本号」会把预发布当成最新，与「跟随稳定线」的策略相悖，也会让已经装了
+  // alpha 的机器被反复提示「有新版本」。
   const versions = [...new Set(candidateList)].sort(cmpVer);
   let npmLatestVer = currentVer;
-  if (versions.length > 0) {
-    npmLatestVer = versions[versions.length - 1];
+  if (stableLatest && cmpVer(stableLatest, currentVer) >= 0) {
+    npmLatestVer = stableLatest;                        // 稳定线不比当前旧 → 跟稳定线
+  } else if (!stableLatest && versions.length > 0) {
+    npmLatestVer = versions[versions.length - 1];       // 拿不到 dist-tags 时退回最大版本
   }
+  // 剩下一种情况：当前装的是预发布（alpha/beta）且比稳定线新 —— 保持现状，
+  // 不去追更高的预发布，否则「跟稳定线」的策略会在预发布线上失效。
   latestVer = npmLatestVer;
 
   // GitHub 已发布但 NPM/镜像尚未同步：仍然上报新版本，并标记 pendingPublish。
+  // 前提是「NPM 上根本没有这个版本」——否则 GitHub 的预发布线（alpha/beta）会把
+  // 稳定线的升级目标顶掉：实测 GitHub 最新 tag 是 0.2.2-alpha.3、稳定线是 0.2.1-rc.5，
+  // 老的判断只看版本号大小，结果把 alpha 当成目标并误报「已发布但未同步」。
   let pendingPublish = false;
-  if (githubRel && cmpVer(githubRel.version, npmLatestVer) > 0) {
+  const npmKnownVersions = new Set(candidateList.map(String));
+  if (githubRel && !npmKnownVersions.has(githubRel.version) && cmpVer(githubRel.version, latestVer) > 0) {
     latestVer = githubRel.version;
     pendingPublish = true;
   }
@@ -258,6 +285,7 @@ async function getVersions() {
     currentVer,
     latestVer,
     npmLatestVer,
+    stableLatest,
     officialReleaseTime,
     pendingPublish,
     pendingDeps,
@@ -296,6 +324,7 @@ if (isCheckJson) {
       pendingPublish: ver.pendingPublish === true,
       pendingDeps: ver.pendingDeps === true,
       npmLatestVersion: ver.npmLatestVer,
+      stableLatest: ver.stableLatest || "",
       sources: ver.sources,
       pluginCount: plugins.length,
       plugins: plugins.map((p) => p.name),

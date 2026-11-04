@@ -1,6 +1,6 @@
 {
   "name": "dsh-shell",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "DeepSeek Harness 无边框桌面壳",
   "main": "main.js",
   "author": "Kr",
@@ -76,7 +76,7 @@
     "msi": {
       "artifactName": "DeepSeek-Harness-${version}.msi",
       "oneClick": false,
-      "perMachine": false,
+      "perMachine": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "DeepSeek Harness",
