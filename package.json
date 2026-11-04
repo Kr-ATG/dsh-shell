@@ -1,6 +1,6 @@
 {
   "name": "dsh-shell",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "DeepSeek Harness 无边框桌面壳",
   "main": "main.js",
   "author": "Kr",

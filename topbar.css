@@ -95,6 +95,9 @@ html, body {
   align-items: center;
   gap: 2px;
   height: 24px;
+  /* 比两个按钮（2×26 + 2 间隙 + 4 内边距 = 58px）宽出一截：
+     右侧那块空白就是「按住拖动整个窗口」的抓手区，太窄了根本抓不住。 */
+  width: 128px;
   padding: 0 2px;
   z-index: 10000001;
   /*
@@ -102,17 +105,22 @@ html, body {
    * 一旦常态可点就会吃掉下面「新建会话」按钮的点击。只有主进程判定光标进入
    * 左上角这块区域时才加 .is-shown 淡入。
    */
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-4px);
-  transition: opacity 0.16s ease, transform 0.16s cubic-bezier(0.16, 1, 0.3, 1);
-  -webkit-app-region: no-drag;
-}
-
-.win-controls.is-shown {
+  /*
+   * 容器本身**常驻可见性**（opacity: 1、pointer-events: auto、无 transform）：
+   * Chromium 判定 -webkit-app-region 的命中测试会跳过 opacity: 0 的元素，
+   * 一旦把容器整体藏起来，这块就再也拖不动窗口了（实测）。
+   * 视觉上的「隐藏」改由里面的按钮承担：按钮默认 opacity: 0 + pointer-events: none。
+   */
   opacity: 1;
   pointer-events: auto;
-  transform: translateY(0);
+  background: transparent;
+  /*
+   * 整组就是窗口的「拖拽把手」：容器设 drag，两个按钮再单独 no-drag，
+   * 于是按钮之间的间隙和右侧留白都能按住拖动整个窗口 —— 而且随时可拖，
+   * 不用等按钮淡入。这块区域（y 0..24）在 WebUI 里没有可点内容，
+   * 「新建会话」按钮从 y=24 起，所以常驻接管点击不会误伤。
+   */
+  -webkit-app-region: drag;
 }
 
 .win-btn {
@@ -126,14 +134,21 @@ html, body {
   border-radius: 5px;
   background: transparent;
   color: var(--edge-fg);
-  opacity: 0.5;
+  /* 默认完全不可见也不可点：容器虽然常驻，但按钮只在鼠标移进左上角时才淡入 */
+  opacity: 0;
+  pointer-events: none;
   cursor: default;
   -webkit-app-region: no-drag;
-  transition: opacity 0.14s ease, background 0.14s ease;
+  transition: opacity 0.16s ease, background 0.14s ease;
 }
 
-.win-btn:hover,
-.win-btn:active {
+.win-controls.is-shown .win-btn {
+  opacity: 0.5;
+  pointer-events: auto;
+}
+
+.win-controls.is-shown .win-btn:hover,
+.win-controls.is-shown .win-btn:active {
   opacity: 1;
   background: var(--edge-hover);
 }

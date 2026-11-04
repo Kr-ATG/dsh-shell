@@ -1542,7 +1542,9 @@ function createWindow() {
   // WebUI 跑在跨源 iframe 里，壳页面收不到它的 mousemove，只能由主进程轮询 OS 光标。
   // 判定矩形就是按钮组本身（左上角 82×26），一离开立即隐藏 —— 这样它永远挡不住
   // WebUI 侧边栏顶部的「新建会话」按钮（那个从 y=24 起）。
-  const WIN_CTRL_ZONE_W = 82;
+  // 判定区域要覆盖整条可拖拽把手（.win-controls 宽 128px），否则鼠标移到
+  // 右侧留白处准备拖动时，条会先一步消失。
+  const WIN_CTRL_ZONE_W = 132;
   const WIN_CTRL_ZONE_H = 26;
   const WIN_CTRL_HIDE_DELAY_MS = 90;  // 极短延迟：防按钮边缘抖动，又不至于卡住点击
   let winCtrlShown = false;
