@@ -475,6 +475,8 @@ function hideUpdateModal() {
 uCloseBtn?.addEventListener("click", hideUpdateModal);
 uBackdrop?.addEventListener("click", hideUpdateModal);
 updateBeacon?.addEventListener("click", showUpdateModal);
+// 托盘「检查 DSH 更新」：主进程发 shell:open-update-modal，这里打开演进中心弹窗
+api.onOpenUpdateModal?.(() => showUpdateModal());
 
 window.addEventListener("keydown", (e) => {
   if (e.code === "Escape" && updateModal && updateModal.style.display === "flex") {

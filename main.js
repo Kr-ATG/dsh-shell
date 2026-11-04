@@ -1858,28 +1858,11 @@ function rebuildTrayMenu() {
     },
     ...safeBootItems,
     {
-      label: "更新自研插件套件（已停用）",
-      enabled: false,
-      click: async () => {
-        if (isDevLayout()) {
-          // 开发机是 link: 布局：npm 版会与本地依赖打架，明确拒绝而不是静默改环境
-          logLine("[shell] 托盘：检测到开发机布局，跳过插件套件更新（link: 依赖由源码构建负责）");
-          try {
-            tray?.displayBalloon({ title: "DeepSeek Harness", content: "当前是开发机布局（link: 本地依赖），插件更新请在各插件目录执行 node build.mjs。" });
-          } catch { /* 托盘通知失败不影响 */ }
-          return;
-        }
-        logLine("[shell] 托盘：手动更新自研插件套件");
-        sendRuntimeEvent({ type: "status", percent: 99, text: "正在更新自研插件套件…", ticker: KR_BUNDLE_ORDER.join(" ") });
-        const dep = await deployKrPlugins((evt) => sendRuntimeEvent(evt));
-        if (dep.ok) {
-          logLine(`[shell] 手动更新插件套件完成: ${dep.plugins.join(", ")}`);
-          showMainWindow();
-          setTimeout(() => restartService(), 800);
-        } else {
-          logLine(`[shell] 手动更新插件套件失败: ${dep.error}`);
-        }
-      },
+      // 自研三件套已按用户要求下线（KR_PLUGINS 置空），这个位置改成 DSH 引擎更新入口：
+      // 点击唤起「演进中心」弹窗，检查并一键升级官方运行时。
+      // 右下角更新图标仍保持「有更新才出现」，这里只是补一个随时可用的手动入口。
+      label: "检查 DSH 更新",
+      click: () => openUpdateModal(),
     },
     { type: "separator" },
     { label: "开机自动启动", type: "checkbox", checked: autoLaunchEnabled(), click: (item) => setAutoLaunch(item.checked) },
