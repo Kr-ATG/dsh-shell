@@ -1,0 +1,24 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dist-*/
+*.asar
+*.msi
+*.exe
+!build/7zSD.sfx
+
+# 运行时状态（本机生成，不要提交）
+_tmp/
+logs/
+*.log
+.shell-cdp-port
+.update-state.json
+settings.json
+DevToolsActivePort
+
+# 备份与临时文件
+*.bak
+*.bak-*
+*~
+.DS_Store
+Thumbs.db

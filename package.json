@@ -1,0 +1,93 @@
+{
+  "name": "dsh-shell",
+  "version": "1.2.3",
+  "description": "DeepSeek Harness 无边框桌面壳",
+  "main": "main.js",
+  "author": "Kr",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "start:shell": "electron . --shell",
+    "start:setup": "electron . --setup",
+    "update": "node update.mjs",
+    "test:safe-boot": "node scripts/test-safe-boot.mjs",
+    "test:e2e-safe-boot": "node scripts/e2e-safe-boot.mjs",
+    "check:shell-integration": "node scripts/check-shell-integration.mjs",
+    "dist": "electron-builder --win nsis",
+    "dist:exe": "electron-builder --win nsis",
+    "dist:msi": "electron-builder --win msi",
+    "dist:card": "node scripts/build-card-installer.mjs",
+    "installer-art": "python build/make-installer-art.py"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.kr.dsh-shell",
+    "productName": "DeepSeek Harness",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "safe-boot.js",
+      "preload.js",
+      "renderer.js",
+      "topbar.html",
+      "topbar.css",
+      "toast.html",
+      "toast.js",
+      "toast-preload.js",
+      "setup.html",
+      "setup-renderer.js",
+      "setup-preload.js",
+      "setup-main.js",
+      "setup-mode.js",
+      "setup-uninstall.bat",
+      "update.mjs",
+      "assets/**/*"
+    ],
+    "win": {
+      "icon": "assets/app-icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": "x64"
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "DeepSeek-Harness-Setup-${version}.exe",
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "differentialPackage": true,
+      "installerLanguages": ["zh_CN", "en_US"],
+      "installerIcon": "assets/app-icon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "installerHeader": "build/installerHeader.bmp",
+      "include": "build/installer.nsh",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DeepSeek Harness"
+    },
+    "msi": {
+      "artifactName": "DeepSeek-Harness-${version}.msi",
+      "oneClick": false,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DeepSeek Harness",
+      "additionalLightArgs": [
+        "-dWixUIDialogBmp=D:\\AI\\Dsh\\build\\msiDialog.bmp",
+        "-dWixUIBannerBmp=D:\\AI\\Dsh\\build\\msiBanner.bmp"
+      ]
+    },
+    "portable": {
+      "artifactName": "DeepSeek-Harness-${version}.exe",
+      "requestExecutionLevel": "user"
+    }
+  }
+}

@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<!-- script-src 必须允许 'self'：toast.js 是外部脚本文件 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:;" />
+<title>任务提醒</title>
+<style>
+  /* ── 桌面完成提醒卡 ────────────────────────────────────────────────────
+     整窗透明无边框，由主进程贴紧工作区右下角任务栏上方定位（见 main.js 的
+     createToastWindow）。这里只画卡片本身。
+
+     设计语言对齐插件的 dsh-done-pill（极简墨色）：无渐变噪点、无辉光扫描，
+     层次靠字号 / 色阶 / 阴影，动效靠位移 + 缩放 + 描画。
+
+     ⚠ 桌面浮窗是**透明窗口**，backdrop-filter 在 Windows 上贴不到桌面合成
+     层（背后不是页面内容），指望它做玻璃感只会得到一块平的半透明色。所以
+     卡面用「近乎不透明的渐变 + 内侧高光边」做厚度，不依赖毛玻璃。
+     ──────────────────────────────────────────────────────────────────── */
+  :root {
+    --font: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+
+    --ok: #3f8f63;
+    --warn: #b3761a;
+
+    --fg: #22262b;
+    --fg-2: #575d65;
+    --fg-3: #8c9299;
+
+    --card-bg: linear-gradient(180deg, #ffffff 0%, #fcfcfd 58%, #f7f8f9 100%);
+    --card-border: rgba(18, 22, 28, 0.075);
+    --card-edge: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    --card-shadow:
+      0 0 0 0.5px rgba(18, 22, 28, 0.05),
+      0 16px 40px -14px rgba(18, 22, 28, 0.30),
+      0 6px 18px -8px rgba(18, 22, 28, 0.16),
+      0 1px 3px -1px rgba(18, 22, 28, 0.10);
+    --card-shadow-hover:
+      0 0 0 0.5px rgba(18, 22, 28, 0.07),
+      0 22px 52px -16px rgba(18, 22, 28, 0.36),
+      0 8px 22px -8px rgba(18, 22, 28, 0.20),
+      0 1px 4px -1px rgba(18, 22, 28, 0.12);
+
+    --disc-1: #ffffff;
+    --disc-2: #eef6f1;
+    --disc-3: #e2efe8;
+
+    --btn-hover: rgba(18, 22, 28, 0.07);
+    --btn-active: rgba(18, 22, 28, 0.13);
+  }
+  body[data-theme="dark"] {
+    --ok: #5fc08d;
+    --warn: #e0a659;
+
+    --fg: #eef1f4;
+    --fg-2: #a3aab3;
+    --fg-3: #757c86;
+
+    --card-bg: linear-gradient(180deg, #2b2e34 0%, #24272c 58%, #1f2226 100%);
+    --card-border: rgba(255, 255, 255, 0.085);
+    --card-edge: inset 0 1px 0 rgba(255, 255, 255, 0.055);
+    --card-shadow:
+      0 0 0 0.5px rgba(0, 0, 0, 0.55),
+      0 20px 48px -16px rgba(0, 0, 0, 0.72),
+      0 8px 22px -10px rgba(0, 0, 0, 0.55),
+      0 1px 4px -1px rgba(0, 0, 0, 0.40);
+    --card-shadow-hover:
+      0 0 0 0.5px rgba(0, 0, 0, 0.6),
+      0 26px 60px -18px rgba(0, 0, 0, 0.80),
+      0 10px 26px -10px rgba(0, 0, 0, 0.62),
+      0 1px 4px -1px rgba(0, 0, 0, 0.45);
+
+    --disc-1: #3b4048;
+    --disc-2: #2c3a34;
+    --disc-3: #27352f;
+
+    --btn-hover: rgba(255, 255, 255, 0.10);
+    --btn-active: rgba(255, 255, 255, 0.18);
+  }
+  /* 语义色：完成任务走墨绿，出错走暖赭（与插件页内卡同一套语义）。 */
+  body { --cur: var(--ok); }
+  body[data-kind="error"] { --cur: var(--warn); }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: transparent;
+    overflow: hidden;
+    font-family: var(--font);
+    color: var(--fg);
+    -webkit-user-select: none; user-select: none;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ── 舞台：只负责整卡出入场的位移 / 缩放 / 淡出 ──────────────────────
+     分层是为了让卡片内部的入场编排（徽标弹入、对勾描画、逐行升起）与整卡
+     滑动解耦——两者叠在同一个元素上会互相覆盖 animation。 */
+  #stage {
+    position: relative;
+    /* 四周给阴影留透明边。⚠ 必须与 main.js 的 TOAST_PAD 保持一致：窗口比
+       卡片宽 2×PAD，阴影落在这圈透明区里才不会被窗口边界裁成硬边灰框。 */
+    margin: 16px;
+  }
+  /* 入场挂在 .anim 上（而不是常驻 #stage）：连续完成复用同一个窗口时，
+     JS 摘类 + reflow + 挂回的方式能整卡重播，不必重建窗口。
+     ⚠ leaving 规则必须在这之后——同特异性靠先后决胜。 */
+  #stage.anim { animation: toastIn 420ms cubic-bezier(0.19, 1, 0.22, 1) both; }
+  #stage.leaving { animation: toastOut 210ms cubic-bezier(0.4, 0, 1, 1) forwards; }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateX(30px) scale(0.955); }
+    62%  { opacity: 1; }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes toastOut {
+    from { opacity: 1; transform: none; }
+    to   { opacity: 0; transform: translateX(20px) translateY(2px) scale(0.965); }
+  }
+
+  /* ── 卡面 ────────────────────────────────────────────────────────────── */
+  #card {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    padding: 12px 13px 13px 13px;
+    border-radius: 13px;
+    border: 1px solid var(--card-border);
+    background: var(--card-bg);
+    box-shadow: var(--card-shadow), var(--card-edge);
+    cursor: pointer;
+    transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1),
+                box-shadow 240ms ease,
+                border-color 240ms ease;
+  }
+  #card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--card-shadow-hover), var(--card-edge);
+  }
+  #card:active { transform: translateY(0) scale(0.994); }
+  #card:focus-visible { outline: 2px solid var(--cur); outline-offset: 2px; }
+  /* 完成瞬间的一次性泛光：语义色沿卡片边缘亮一下随即散去。
+     用伪元素而不是动画 card 的 box-shadow——box-shadow 被 animation 占用后
+     会锁死 hover 的阴影过渡（animation 优先级高于普通声明）。 */
+  #card::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--cur) 52%, transparent),
+      0 0 24px color-mix(in srgb, var(--cur) 30%, transparent);
+  }
+
+  /* ── 左徽标：柔光圆底 + 描画对勾 / 感叹号 + 一次性扩散光环 ───────────── */
+  #glyph {
+    position: relative;
+    flex: none;
+    width: 34px; height: 34px;
+    margin-top: 1px;
+    display: grid;
+    place-items: center;
+  }
+  #glyph .ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 1.5px solid var(--cur);
+    opacity: 0;
+    pointer-events: none;
+  }
+  #glyph .disc {
+    position: relative;
+    width: 100%; height: 100%;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    color: var(--cur);
+    background: radial-gradient(118% 118% at 30% 22%, var(--disc-1) 0%, var(--disc-2) 58%, var(--disc-3) 100%);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cur) 26%, transparent),
+                0 1px 2px rgba(18, 22, 28, 0.07);
+    transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  #card:hover #glyph .disc { transform: scale(1.06); }
+  #glyph svg { display: block; overflow: visible; }
+  /* 图标本体先藏起来：靠 dasharray 描画入场（reduced-motion 下直接给终态） */
+  #glyph .draw {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+  }
+
+  /* ── 右侧文字区 ──────────────────────────────────────────────────────── */
+  #main {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    padding-right: 14px;         /* 给右上角关闭按钮让位 */
+  }
+  #kicker-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+  #kicker {
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 15px;
+    letter-spacing: 0.01em;
+    color: color-mix(in srgb, var(--cur) 72%, var(--fg));
+    white-space: nowrap;
+    flex: none;
+  }
+  #meta {
+    font-size: 11px;
+    line-height: 15px;
+    color: var(--fg-3);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    margin-left: auto;
+    padding-left: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #title {
+    margin-top: 1px;
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 19px;
+    letter-spacing: -0.005em;
+    color: var(--fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #text {
+    margin-top: 3px;
+    font-size: 12.5px;
+    line-height: 18px;
+    color: var(--fg-2);
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  #summary {
+    margin-top: 4px;
+    padding-left: 8px;
+    border-left: 2px solid color-mix(in srgb, var(--fg-3) 40%, transparent);
+    font-size: 12px;
+    line-height: 17px;
+    color: var(--fg-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ── 右上角关闭：静默待命，hover 卡片才浮现（不抢纸面） ──────────────── */
+  #close {
+    position: absolute;
+    top: 7px; right: 7px;
+    width: 22px; height: 22px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--fg-3);
+    cursor: pointer;
+    opacity: 0;
+    transform: scale(0.86);
+    transition: opacity 180ms ease, transform 200ms cubic-bezier(0.32, 0.72, 0, 1),
+                background 130ms ease, color 130ms ease;
+  }
+  #card:hover #close,
+  #card:focus-within #close { opacity: 1; transform: scale(1); }
+  #close:hover { background: var(--btn-hover); color: var(--fg); }
+  #close:active { background: var(--btn-active); }
+  #close svg { display: block; }
+
+  /* ── 底部自动收起进度：一条会「熄灭」的极细语义色线 ────────────────────
+     用 clip-path 横向裁切（不是 scaleX）：背景渐变固定不动，被裁掉的右段
+     直接消失，观感是余烬从右往左烧完，而不是整条一起缩短。两端渐隐是为了
+     满格时不至于变成一条硬边绿线（那会像卡片的装饰描边）。 */
+  #progress {
+    position: absolute;
+    left: 1px; right: 1px; bottom: 1px;
+    height: 2px;
+    border-radius: 0 0 12px 12px;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  #progress-fill {
+    display: block;
+    height: 100%;
+    width: 100%;
+    background: linear-gradient(90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--cur) 46%, transparent) 9%,
+      color-mix(in srgb, var(--cur) 62%, transparent) 82%,
+      transparent 100%);
+    clip-path: inset(0 0 0 0);
+    opacity: 0;
+    transition: opacity 320ms ease;
+  }
+  /* 播放中才显出进度条；hover（= 倒计时暂停）时压暗，暗示「停住了」 */
+  #progress-fill.running { opacity: 0.78; }
+  #progress-fill.paused { opacity: 0.34; }
+
+  /* ── 入场编排：只在 #stage.anim 存在时播放（重播靠 JS 摘类 + reflow） ── */
+  .anim #glyph .disc { animation: discPop 460ms cubic-bezier(0.34, 1.5, 0.64, 1) 40ms both; }
+  .anim #glyph .ring { animation: ringPulse 820ms cubic-bezier(0.2, 0.8, 0.3, 1) 170ms both; }
+  .anim #glyph .draw { animation: drawStroke 360ms cubic-bezier(0.65, 0, 0.35, 1) 210ms both; }
+  .anim #kicker-row { animation: riseIn 380ms cubic-bezier(0.19, 1, 0.22, 1) 110ms both; }
+  .anim #title { animation: riseIn 380ms cubic-bezier(0.19, 1, 0.22, 1) 160ms both; }
+  .anim #text { animation: riseIn 380ms cubic-bezier(0.19, 1, 0.22, 1) 200ms both; }
+  .anim #summary { animation: riseIn 380ms cubic-bezier(0.19, 1, 0.22, 1) 235ms both; }
+  .anim #card::after { animation: glowFlash 1000ms cubic-bezier(0.2, 0.8, 0.3, 1) 190ms both; }
+
+  @keyframes discPop {
+    from { opacity: 0; transform: scale(0.42); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+  @keyframes ringPulse {
+    0%   { opacity: 0.5; transform: scale(0.86); }
+    100% { opacity: 0; transform: scale(1.9); }
+  }
+  @keyframes drawStroke { to { stroke-dashoffset: 0; } }
+  @keyframes glowFlash {
+    0%   { opacity: 0; }
+    26%  { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  @keyframes riseIn {
+    from { opacity: 0; transform: translateY(5px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  /* 减少动效：直接给终态，不做任何位移 / 描画 */
+  @media (prefers-reduced-motion: reduce) {
+    #stage, #card, #glyph .disc, #glyph .ring, #glyph .draw,
+    #kicker-row, #title, #text, #summary, #close, #progress-fill {
+      animation: none !important;
+      transition: none !important;
+    }
+    #glyph .draw { stroke-dashoffset: 0; }
+    #close { opacity: 1; transform: none; }
+  }
+</style>
+</head>
+<body data-theme="light" data-kind="done">
+  <div id="stage" class="anim">
+    <div id="card" role="alert" tabindex="0" title="点击进入对应会话">
+      <div id="glyph" aria-hidden="true">
+        <span class="ring"></span>
+        <span class="disc">
+          <svg id="ico-check" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path class="draw" pathLength="1" d="M5.4 12.6 L10.1 17.3 L18.6 7.2" />
+          </svg>
+          <svg id="ico-warn" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+            <path class="draw" pathLength="1" d="M12 6.4 L12 13.6" />
+            <path class="draw" pathLength="1" d="M12 17.3 L12 17.45" />
+          </svg>
+        </span>
+      </div>
+
+      <div id="main">
+        <div id="kicker-row">
+          <span id="kicker">任务完成</span>
+          <span id="meta"></span>
+        </div>
+        <div id="title"></div>
+        <div id="text"></div>
+        <div id="summary"></div>
+      </div>
+
+      <button id="close" aria-label="关闭提醒" title="关闭">
+        <svg viewBox="0 0 10 10" width="9" height="9" fill="none" stroke="currentColor"
+             stroke-width="1.4" stroke-linecap="round"><path d="M1.6 1.6l6.8 6.8M8.4 1.6l-6.8 6.8" /></svg>
+      </button>
+
+      <div id="progress"><i id="progress-fill"></i></div>
+    </div>
+  </div>
+
+  <script src="toast.js"></script>
+</body>
+</html>

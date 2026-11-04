@@ -1,0 +1,866 @@
+
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* ================= 官方美学架构与系统语义变量 ================= */
+:root,
+[data-theme="dark"] {
+  --shell-bg: #131314;
+  --shell-fg: #e3e3e3;
+
+  /* 动作反馈浮条 + 右缘滑出的窗口控制条 */
+  --toast-bg: rgba(28, 29, 31, 0.88);
+  --toast-border: rgba(255, 255, 255, 0.12);
+  --toast-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --toast-fg: #f1f3f4;
+  --toast-dim: #9aa0a6;
+  --toast-danger: #f87171;
+  --edge-bg: rgba(28, 29, 31, 0.92);
+  --edge-border: rgba(255, 255, 255, 0.12);
+  --edge-shadow: 0 12px 28px -10px rgba(0, 0, 0, 0.62);
+  --edge-fg: #e8eaed;
+  --edge-hover: rgba(255, 255, 255, 0.12);
+
+  /* 纯粹搜索框与环境微晕 */
+  --ss-bg: #131314;
+  --ss-orb-1: rgba(26, 115, 232, 0.15);
+  --ss-orb-2: rgba(168, 85, 247, 0.10);
+  --ss-bar-bg: #1e1f20;
+  --ss-bar-border: rgba(255, 255, 255, 0.12);
+  --ss-bar-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --ss-whale: #ffffff;
+  --ss-text-pri: #f1f3f4;
+  --ss-text-sec: #9aa0a6;
+  --ss-accent: #8ab4f8;
+  --ss-percent: #f1f3f4;
+}
+
+[data-theme="light"] {
+  --shell-bg: #ffffff;
+  --shell-fg: #1f1f1f;
+
+  /* 动作反馈浮条 + 右缘滑出的窗口控制条 */
+  --toast-bg: rgba(255, 255, 255, 0.90);
+  --toast-border: rgba(0, 0, 0, 0.12);
+  --toast-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  --toast-fg: #1f1f1f;
+  --toast-dim: #5f6368;
+  --toast-danger: #dc2626;
+  --edge-bg: rgba(255, 255, 255, 0.94);
+  --edge-border: rgba(0, 0, 0, 0.12);
+  --edge-shadow: 0 12px 28px -10px rgba(0, 0, 0, 0.16);
+  --edge-fg: #1f1f1f;
+  --edge-hover: rgba(0, 0, 0, 0.07);
+
+  /* 纯粹搜索框与环境微晕 */
+  --ss-bg: #ffffff;
+  --ss-orb-1: rgba(210, 227, 252, 0.50);
+  --ss-orb-2: rgba(243, 232, 255, 0.40);
+  --ss-bar-bg: #ffffff;
+  --ss-bar-border: rgba(0, 0, 0, 0.12);
+  --ss-bar-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  --ss-whale: #000000;
+  --ss-text-pri: #1f1f1f;
+  --ss-text-sec: #5f6368;
+  --ss-accent: #1a73e8;
+  --ss-percent: #1f1f1f;
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--shell-bg);
+  color: var(--shell-fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Google Sans", "Segoe UI Variable Display", "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ================= 左上角常驻窗口控制（最小化 / 最大化） ================= */
+/*
+ * 整组固定高 24px 贴在窗口左上角：WebUI 侧边栏顶部的内容（「新建会话」按钮与
+ * 品牌 logo）都从 y=24 起，这组按钮到 24 就结束，因此既不会压住它们、也不吃点击。
+ * 平时半透明不抢视线，鼠标移上去才实心高亮。
+ */
+.win-controls {
+  position: fixed;
+  left: 8px;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 0 2px;
+  z-index: 10000001;
+  /*
+   * 平时完全隐藏：opacity 0 + pointer-events: none —— 这一层压在 WebUI 左上角，
+   * 一旦常态可点就会吃掉下面「新建会话」按钮的点击。只有主进程判定光标进入
+   * 左上角这块区域时才加 .is-shown 淡入。
+   */
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 0.16s ease, transform 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  -webkit-app-region: no-drag;
+}
+
+.win-controls.is-shown {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--edge-fg);
+  opacity: 0.5;
+  cursor: default;
+  -webkit-app-region: no-drag;
+  transition: opacity 0.14s ease, background 0.14s ease;
+}
+
+.win-btn:hover,
+.win-btn:active {
+  opacity: 1;
+  background: var(--edge-hover);
+}
+
+.win-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
+.win-btn svg {
+  display: block;
+  pointer-events: none;
+}
+
+/* 还原图标默认隐藏（不能在 HTML 上写 inline style：那会压住 html.is-maximized 的切换规则） */
+.win-btn .win-ico-restore { display: none; }
+
+/* 最大化 ↔ 还原：图标按 html.is-maximized 切换（主进程事件回灌） */
+html.is-maximized #win-max .win-ico-max { display: none; }
+html.is-maximized #win-max .win-ico-restore { display: block; }
+
+/* 右键动作反馈（保存图片 / 复制结果） */
+.shell-toast {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 10000000;
+  max-width: 380px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--toast-bg);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--toast-border);
+  box-shadow: var(--toast-shadow);
+  color: var(--toast-fg);
+  font-size: 12.5px;
+  line-height: 1.45;
+  opacity: 0;
+  transform: translateY(10px) scale(0.97);
+  pointer-events: none;
+  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.shell-toast.is-show {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.shell-toast.is-err {
+  border-color: var(--toast-danger);
+  color: var(--toast-danger);
+}
+
+.shell-toast.is-busy {
+  color: var(--toast-dim);
+}
+
+
+/* ================= 主内容视图与 Iframe 容器 ================= */
+#content {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--shell-bg);
+}
+
+#dsh-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: var(--shell-bg);
+  opacity: 0;
+  transform: scale(0.995);
+  transition: opacity 0.52s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.52s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+body.page-revealed #dsh-frame {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* 异常容错遮罩 */
+#error-mask {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: var(--shell-bg);
+  z-index: 500;
+}
+.err-whale {
+  color: var(--ss-whale);
+  opacity: 0.6;
+}
+#error-msg {
+  font-size: 13.5px;
+  color: var(--ss-text-sec);
+}
+.retry {
+  padding: 8px 22px;
+  border-radius: 999px;
+  border: 1px solid var(--ss-bar-border);
+  background: var(--ss-bar-bg);
+  color: var(--ss-text-pri);
+  font-size: 12.5px;
+  cursor: pointer;
+  box-shadow: var(--ss-bar-shadow);
+  transition: all 0.2s ease;
+}
+.retry:hover {
+  border-color: var(--ss-accent);
+}
+
+/* ================= 纯粹开屏搜索框舞台 (Search Stage) ================= */
+.ss-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ss-bg);
+  cursor: default;
+  transition: opacity 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity;
+}
+
+.ss-stage.done {
+  display: none !important;
+}
+
+/* 空间微晕背景光 */
+.ss-background-ambient {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.ss-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+}
+.ss-orb-1 {
+  width: 480px;
+  height: 480px;
+  top: 22%;
+  left: 28%;
+  background: var(--ss-orb-1);
+}
+.ss-orb-2 {
+  width: 400px;
+  height: 400px;
+  bottom: 22%;
+  right: 28%;
+  background: var(--ss-orb-2);
+}
+
+/* 居中锚点与平滑向下位移容器（只含搜索框，无卡片或文字干扰） */
+.ss-center-anchor {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 660px;
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: top 0.65s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.65s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: top, transform, opacity;
+}
+
+/* 服务就绪后搜索框向下平滑滑移到聊天输入框底部位置！ */
+.ss-stage.gliding-down .ss-center-anchor {
+  top: calc(100% - 72px);
+  transform: translate(-50%, 0);
+  opacity: 1;
+  transition: top 0.60s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.60s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ss-stage.gliding-down {
+  background: transparent !important;
+  pointer-events: none;
+}
+
+/* ---------- 运行环境状态 / 错误提示（开屏阶段，1.1.34 新增） ----------
+   旧版运行环境缺失时开屏静默停在 86%；现在这里给出真实原因与动作入口。 */
+.ss-runtime-note {
+  margin-top: 14px;
+  width: 100%;
+  max-width: 560px;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--ss-bar-border);
+  background: var(--ss-bar-bg);
+  box-shadow: var(--ss-bar-shadow);
+  text-align: left;
+}
+.ss-runtime-note.is-error {
+  border-color: rgba(248, 113, 113, 0.45);
+}
+.ss-rn-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ss-text-sec);
+  margin-bottom: 6px;
+}
+.ss-runtime-note.is-error .ss-rn-title {
+  color: #f87171;
+}
+.ss-rn-text {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ss-text-pri);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ss-rn-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ss-text-sec);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ss-rn-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ss-rn-btn {
+  appearance: none;
+  border: 1px solid var(--ss-bar-border);
+  background: transparent;
+  color: var(--ss-text-pri);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 7px 13px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.ss-rn-btn:hover {
+  border-color: var(--ss-accent);
+  color: var(--ss-accent);
+}
+.ss-rn-btn-primary {
+  border-color: var(--ss-accent);
+  color: var(--ss-accent);
+}
+
+/* 核心 AI 搜索输入框 */
+.ss-search-bar {
+  width: 100%;
+  height: 56px;
+  background: var(--ss-bar-bg);
+  border: 1px solid var(--ss-bar-border);
+  border-radius: 28px;
+  box-shadow: var(--ss-bar-shadow);
+  display: flex;
+  align-items: center;
+  padding: 0 18px 0 20px;
+  gap: 15px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+.ss-search-bar:hover {
+  border-color: var(--ss-accent);
+  box-shadow: 0 18px 44px -8px rgba(26, 115, 232, 0.20);
+}
+
+/* 左侧 Harness 黑色鲸鱼图标 */
+.ss-icon-box {
+  width: 32px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ss-whale);
+  flex-shrink: 0;
+  transition: transform 0.3s ease;
+}
+.ss-search-bar:hover .ss-icon-box {
+  transform: scale(1.06);
+}
+.ss-whale-svg {
+  display: block;
+}
+
+/* 文字视口：从左往右自然铺开核心容器 */
+.ss-text-viewport {
+  flex: 1;
+  height: 24px;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.ss-step-text {
+  font-size: 14.5px;
+  color: var(--ss-text-pri);
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  display: inline-block;
+  overflow: hidden;
+  will-change: max-width, opacity;
+}
+
+/* 从左往右自然铺开动画 (Left-To-Right Reveal) */
+.ss-step-text.unfolding {
+  animation: ssUnfoldLeftToRight 0.42s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes ssUnfoldLeftToRight {
+  0% {
+    max-width: 0%;
+    opacity: 0.2;
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 20px), transparent 100%);
+    mask-image: linear-gradient(to right, black calc(100% - 20px), transparent 100%);
+  }
+  75% {
+    opacity: 1;
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 20px), transparent 100%);
+    mask-image: linear-gradient(to right, black calc(100% - 20px), transparent 100%);
+  }
+  100% {
+    max-width: 100%;
+    opacity: 1;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+
+/* 旧文字快速淡出 */
+.ss-step-text.fading-out {
+  opacity: 0;
+  transform: translateX(6px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+/* 右侧纯净等宽百分比与切入指示 */
+.ss-trailing {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.ss-percent {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ss-percent);
+  min-width: 38px;
+  text-align: right;
+  letter-spacing: 0.5px;
+}
+.ss-send-arrow {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--ss-accent);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.88;
+  transition: all 0.2s ease;
+}
+.ss-search-bar:hover .ss-send-arrow {
+  opacity: 1;
+  transform: translateX(2px);
+}
+
+/* ================= 侧边栏底部更新指示图标（紧邻「手机远程」入口左侧） ================= */
+.update-beacon {
+  position: fixed;
+  /* 固定到窗口右下角：左下角会压在侧栏底部「设置 / 手机远程 / 状态」一带，
+     窗口宽度或侧栏内容变化时容易被遮住、看起来时有时无。 */
+  right: var(--beacon-right, 18px);
+  bottom: var(--beacon-bottom, 18px);
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  /*
+   * 不依赖底下的 DSH 页面配色：壳跟随系统主题、DSH 自己可以另选深浅，
+   * 两者相反时纯透明图标会「消失」。给一枚跟壳主题一致的浅底按钮，
+   * 深色页面上也始终有轮廓。
+   */
+  background: var(--ss-bar-bg);
+  border: 1px solid var(--ss-bar-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  color: var(--ss-text-sec);
+  opacity: 0.92;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 99990;
+  padding: 0;
+  -webkit-app-region: no-drag;
+  transition: opacity 0.25s ease, color 0.25s ease, transform 0.35s ease,
+              background 0.25s ease, box-shadow 0.25s ease;
+  animation: beaconFadeIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.update-beacon:hover {
+  opacity: 1;
+  color: var(--ss-accent);
+  transform: rotate(60deg) scale(1.12);
+  background: rgba(128, 128, 128, 0.12);
+  box-shadow: 0 0 0 1px rgba(128, 128, 128, 0.14), 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+.update-beacon:active {
+  transform: rotate(60deg) scale(0.96);
+  transition-duration: 0.08s;
+}
+/* 有新版本：红点外扩一层呼吸光晕，静置时也能一眼看见 */
+.update-beacon.has-update {
+  color: var(--ss-accent);
+  opacity: 1;
+}
+.beacon-dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #34a853;
+  box-shadow: 0 0 6px #34a853;
+  animation: beaconPulse 2s infinite;
+}
+@keyframes beaconFadeIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.86); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes beaconPulse {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.25); opacity: 1; box-shadow: 0 0 12px #34a853; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+
+/* ================= 演进中心更新模态框 ================= */
+.u-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.u-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+}
+.u-card {
+  position: relative;
+  width: 520px;
+  max-width: 92vw;
+  background: var(--ss-bar-bg);
+  border: 1px solid var(--ss-bar-border);
+  border-radius: 24px;
+  box-shadow: 0 24px 64px -12px rgba(0, 0, 0, 0.7);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  color: var(--ss-text-pri);
+  animation: uModalIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes uModalIn {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.u-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.u-header-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.u-whale-badge {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: rgba(26, 115, 232, 0.12);
+  color: var(--ss-whale);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.u-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ss-text-pri);
+}
+.u-subtitle {
+  font-size: 12px;
+  color: var(--ss-text-sec);
+  margin-top: 2px;
+}
+.u-close-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--ss-text-sec);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.u-close-btn:hover {
+  background: rgba(128, 128, 128, 0.15);
+  color: var(--ss-text-pri);
+}
+.u-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.u-subcard {
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--ss-bg);
+  border: 1px solid var(--ss-bar-border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.u-subcard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.u-subcard-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ss-text-pri);
+}
+.u-badge {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.15);
+  color: var(--ss-text-sec);
+}
+.u-badge.ok {
+  background: rgba(52, 168, 83, 0.18);
+  color: #81c995;
+}
+.u-badge.warn {
+  background: rgba(251, 188, 4, 0.18);
+  color: #fdd663;
+}
+.u-version-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 6px 0;
+}
+.u-v-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.u-v-meta {
+  font-size: 11px;
+  color: var(--ss-text-sec);
+}
+.u-v-val {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ss-text-pri);
+}
+.u-v-arrow {
+  color: var(--ss-text-sec);
+  font-size: 14px;
+}
+.u-meta-divider {
+  height: 1px;
+  background: var(--ss-bar-border);
+  opacity: 0.5;
+  margin: 2px 0;
+}
+.u-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px;
+}
+.u-meta-label {
+  font-size: 12px;
+  color: var(--ss-text-sec);
+}
+.u-meta-val {
+  font-size: 12px;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--ss-text-pri);
+  font-weight: 500;
+}
+.u-status-tip {
+  font-size: 12px;
+  color: var(--ss-text-sec);
+  text-align: center;
+}
+.u-progress-card {
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--ss-bg);
+  border: 1px solid var(--ss-bar-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.u-prog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+}
+.u-prog-step {
+  color: var(--ss-text-pri);
+  font-weight: 500;
+}
+.u-prog-pct {
+  font-family: ui-monospace, Consolas, monospace;
+  font-weight: 600;
+  color: var(--ss-accent);
+}
+.u-prog-bar-bg {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.15);
+  overflow: hidden;
+}
+.u-prog-bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: var(--ss-accent);
+  transition: width 0.2s ease;
+}
+.u-prog-ticker {
+  font-size: 11.5px;
+  color: var(--ss-text-sec);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 引擎未升级的警示态：琥珀色 + 轻微呼吸，别再用成功绿勾骗人 */
+.u-prog-step.is-warn,
+.u-prog-pct.is-warn {
+  color: #fdd663;
+}
+.u-prog-ticker.is-warn {
+  color: #fdd663;
+  white-space: normal;
+  animation: u-warn-breathe 1.8s ease-in-out infinite;
+}
+.u-progress-card.is-warn {
+  border-color: rgba(251, 188, 4, 0.35);
+  box-shadow: 0 0 0 1px rgba(251, 188, 4, 0.12), 0 6px 22px rgba(251, 188, 4, 0.1);
+  animation: u-warn-breathe 1.8s ease-in-out infinite;
+}
+.u-prog-bar-fill.is-warn {
+  background: linear-gradient(90deg, #fdd663, #fbbc04);
+}
+@keyframes u-warn-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.62; }
+}
+.u-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.u-btn {
+  padding: 8px 20px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+.u-btn-tonal {
+  background: rgba(128, 128, 128, 0.12);
+  color: var(--ss-text-pri);
+}
+.u-btn-tonal:hover {
+  background: rgba(128, 128, 128, 0.2);
+}
+.u-btn-primary {
+  background: var(--ss-accent);
+  color: #041e49;
+}
+.u-btn-primary:hover {
+  opacity: 0.92;
+}

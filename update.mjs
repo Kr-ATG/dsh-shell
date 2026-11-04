@@ -1,0 +1,443 @@
+#!/usr/bin/env node
+/**
+ * update.mjs — DeepSeek Harness 一键更新工具
+ * 
+ * 支持命令行模式及 Electron 壳层交互模式：
+ * --check-json   : 只检查是否有新版本更新并输出 JSON
+ * --stream-json  : 流式输出更新进度 JSON，供界面弹窗实时消费
+ * --force        : 强制重新构建并更新全部组件
+ */
+
+import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { execSync } from "node:child_process";
+
+const ROOT_DIR = resolve(import.meta.dirname ?? process.cwd());
+const RUNTIME_DIR = join(ROOT_DIR, "dsh-runtime");
+
+const isStreamJson = process.argv.includes("--stream-json");
+const isCheckJson = process.argv.includes("--check-json");
+const isForce = process.argv.includes("--force");
+
+function emitProgress(percent, step, detail = "") {
+  if (isStreamJson) {
+    console.log(JSON.stringify({ type: "progress", percent, step, detail, text: detail }));
+  } else if (!isCheckJson) {
+    console.log(`[一键更新 ${percent}%] ${step} ${detail ? `(${detail})` : ""}`);
+  }
+}
+
+function parseVer(v) {
+  const m = String(v).match(/^(\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z0-9.]+))?$/);
+  if (!m) return [0, 0, 0, ""];
+  return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] || ""];
+}
+
+function cmpVer(a, b) {
+  const pa = parseVer(a), pb = parseVer(b);
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  }
+  if (!pa[3] && pb[3]) return 1;
+  if (pa[3] && !pb[3]) return -1;
+  return pa[3].localeCompare(pb[3], undefined, { numeric: true });
+}
+
+const STATE_FILE = join(ROOT_DIR, ".update-state.json");
+
+function readState() {
+  if (!existsSync(STATE_FILE)) return {};
+  try { return JSON.parse(readFileSync(STATE_FILE, "utf8")) || {}; } catch { return {}; }
+}
+
+function patchState(patch) {
+  try { writeFileSync(STATE_FILE, JSON.stringify({ ...readState(), ...patch }, null, 2)); } catch {}
+}
+
+// 已安装引擎的真实版本：node_modules 优先，其次看声明的依赖。
+// 安装后必须复读一次——npm 退出码为 0 不等于版本真的换掉了。
+function readInstalledVersion() {
+  const installedPkg = join(RUNTIME_DIR, "node_modules", "@deepseek-ai", "dsh", "package.json");
+  if (existsSync(installedPkg)) {
+    try {
+      const pkg = JSON.parse(readFileSync(installedPkg, "utf8"));
+      if (pkg.version) return pkg.version;
+    } catch {}
+  }
+  const pkgPath = join(RUNTIME_DIR, "package.json");
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+      return pkg.dependencies?.["@deepseek-ai/dsh"] || "0.1.5-rc.2";
+    } catch {}
+  }
+  return "0.1.5-rc.2";
+}
+
+function formatDateTime(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function getFallbackOfficialTime(currentVer) {
+  if (existsSync(STATE_FILE)) {
+    try {
+      const data = JSON.parse(readFileSync(STATE_FILE, "utf8"));
+      if (data.officialReleaseTime) return data.officialReleaseTime;
+    } catch {}
+  }
+  const installedPkg = join(RUNTIME_DIR, "node_modules", "@deepseek-ai", "dsh", "package.json");
+  if (existsSync(installedPkg)) {
+    try {
+      return formatDateTime(statSync(installedPkg).mtime);
+    } catch {}
+  }
+  return "2026-09-10 22:57:10";
+}
+
+function saveOfficialTimeCache(timeStr) {
+  patchState({ officialReleaseTime: timeStr });
+}
+
+function saveLastUpdatedTime(timeStr) {
+  patchState({ lastUpdated: timeStr });
+}
+
+async function getVersions() {
+  const pkgPath = join(RUNTIME_DIR, "package.json");
+  const currentVer = readInstalledVersion();
+
+  let latestVer = currentVer;
+  let officialReleaseTime = "";
+  const candidateList = [];
+  const sources = [];
+  let timeObj = null;
+  let githubRel = null;
+
+  // 1. 优先尝试直连官方 npm 仓库获取第一手版本信息（规避镜像同步滞后问题，3.5s 超时）
+  try {
+    const res = await fetch("https://registry.npmjs.org/@deepseek-ai/dsh", {
+      signal: AbortSignal.timeout(9000),
+      headers: { "cache-control": "no-cache" },
+    });
+    if (res.ok) {
+      const doc = await res.json();
+      sources.push("npm-official");
+      if (doc["dist-tags"] && typeof doc["dist-tags"] === "object") {
+        candidateList.push(...Object.values(doc["dist-tags"]).filter(Boolean));
+      }
+      if (doc.versions && typeof doc.versions === "object") {
+        candidateList.push(...Object.keys(doc.versions));
+      }
+      if (doc.time && typeof doc.time === "object") {
+        timeObj = doc.time;
+      }
+    }
+  } catch {}
+
+  // 1.5 GitHub Releases：官方「已发布」的第一手信号。
+  //     NPM 包与其镜像通常要再等几分钟才同步，只查 NPM 会在发布后的窗口期内误报「已是最新」。
+  try {
+    const rel = await fetch("https://api.github.com/repos/deepseek-ai/deepseek-harness/releases?per_page=15", {
+      signal: AbortSignal.timeout(6000),
+      headers: { "accept": "application/vnd.github+json", "user-agent": "dsh-shell-updater" },
+    });
+    if (rel.ok) {
+      const list = await rel.json();
+      if (Array.isArray(list)) {
+        for (const item of list) {
+          const m = String(item.tag_name || "").match(/^dsh-v(.+)$/);
+          if (!m || item.draft) continue;
+          if (!githubRel || cmpVer(m[1], githubRel.version) > 0) {
+            githubRel = { version: m[1], publishedAt: item.published_at || "", url: item.html_url || "" };
+          }
+        }
+      }
+    }
+  } catch {}
+  if (githubRel) sources.push("github");
+
+  // 2. 本地配置的 npm 仓库作为补充与离线兜底
+  try {
+    if (!timeObj) {
+      try {
+        const rawTime = execSync("npm view @deepseek-ai/dsh time --json", {
+          cwd: RUNTIME_DIR,
+          encoding: "utf8",
+          stdio: ["pipe", "pipe", "ignore"],
+          timeout: 4000,
+        });
+        timeObj = JSON.parse(rawTime);
+      } catch {}
+    }
+    if (timeObj && typeof timeObj === "object") {
+      const verKeys = Object.keys(timeObj).filter((k) => k !== "created" && k !== "modified");
+      candidateList.push(...verKeys);
+      if (verKeys.length > 0) sources.push("npm-mirror");
+    }
+
+    try {
+      const rawTags = execSync("npm view @deepseek-ai/dsh dist-tags --json", {
+        cwd: RUNTIME_DIR,
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "ignore"],
+        timeout: 4000,
+      });
+      const distTags = JSON.parse(rawTags);
+      if (distTags && typeof distTags === "object") {
+        candidateList.push(...Object.values(distTags).filter(Boolean));
+      }
+    } catch {}
+
+    try {
+      const rawVers = execSync("npm view @deepseek-ai/dsh versions --json", {
+        cwd: RUNTIME_DIR,
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "ignore"],
+        timeout: 4000,
+      });
+      const allVers = JSON.parse(rawVers);
+      if (Array.isArray(allVers)) {
+        candidateList.push(...allVers);
+      }
+    } catch {}
+  } catch {}
+
+  const versions = [...new Set(candidateList)].sort(cmpVer);
+  let npmLatestVer = currentVer;
+  if (versions.length > 0) {
+    npmLatestVer = versions[versions.length - 1];
+  }
+  latestVer = npmLatestVer;
+
+  // GitHub 已发布但 NPM/镜像尚未同步：仍然上报新版本，并标记 pendingPublish。
+  let pendingPublish = false;
+  if (githubRel && cmpVer(githubRel.version, npmLatestVer) > 0) {
+    latestVer = githubRel.version;
+    pendingPublish = true;
+  }
+
+  // 3. 若发现新版本，静默向 npmmirror 发起同步请求加快镜像收敛
+  if (cmpVer(latestVer, currentVer) > 0) {
+    try {
+      fetch("https://registry-direct.npmmirror.com/@deepseek-ai%2fdsh/sync", { method: "PUT" }).catch(() => {});
+    } catch {}
+  }
+
+  if (timeObj && timeObj[latestVer]) {
+    officialReleaseTime = formatDateTime(new Date(timeObj[latestVer]));
+  } else if (githubRel && githubRel.version === latestVer && githubRel.publishedAt) {
+    officialReleaseTime = formatDateTime(new Date(githubRel.publishedAt));
+  } else if (timeObj) {
+    const targetTimeStr = timeObj[currentVer] || timeObj.modified;
+    if (targetTimeStr) officialReleaseTime = formatDateTime(new Date(targetTimeStr));
+  }
+
+  if (!officialReleaseTime) {
+    officialReleaseTime = getFallbackOfficialTime(currentVer);
+  } else {
+    saveOfficialTimeCache(officialReleaseTime);
+  }
+
+  // 分批发布守卫：官方常先发主包、再陆续补齐它依赖的两百多个兄弟包，
+  // 那个窗口里安装必然 ETARGET。把上次失败的目标版本记在 state 里，
+  // 仅当最新版本与失败版本精确匹配、且距离上次失败不足 15 分钟时才抑制 UI 强提醒
+  let pendingDeps = false;
+  const state = readState();
+  const pendingDepsFor = state.pendingDepsFor || "";
+  const pendingDepsAt = Number(state.pendingDepsAt || 0);
+  if (pendingDepsFor && pendingDepsFor === latestVer && cmpVer(pendingDepsFor, currentVer) > 0) {
+    if (!pendingDepsAt || Date.now() - pendingDepsAt < 15 * 60 * 1000) {
+      pendingDeps = true;
+    } else {
+      patchState({ pendingDepsFor: null, pendingDepsAt: null });
+    }
+  }
+
+  return {
+    currentVer,
+    latestVer,
+    npmLatestVer,
+    officialReleaseTime,
+    pendingPublish,
+    pendingDeps,
+    sources,
+    hasUpdate: cmpVer(latestVer, currentVer) > 0,
+  };
+}
+
+function getPluginDirs() {
+  const entries = readdirSync(ROOT_DIR);
+  const list = [];
+  for (const entry of entries) {
+    if (entry.startsWith("dsh-") && entry !== "dsh-runtime") {
+      const dirPath = join(ROOT_DIR, entry);
+      const buildFile = join(dirPath, "build.mjs");
+      if (existsSync(buildFile) && statSync(dirPath).isDirectory()) {
+        list.push({ name: entry, path: dirPath });
+      }
+    }
+  }
+  return list;
+}
+
+
+// 检查模式
+if (isCheckJson) {
+  const ver = await getVersions();
+  const plugins = getPluginDirs();
+  console.log(
+    JSON.stringify({
+      hasUpdate: ver.hasUpdate,
+      currentVersion: ver.currentVer,
+      latestVersion: ver.latestVer,
+      officialReleaseTime: ver.officialReleaseTime,
+      lastUpdated: ver.officialReleaseTime,
+      pendingPublish: ver.pendingPublish === true,
+      pendingDeps: ver.pendingDeps === true,
+      npmLatestVersion: ver.npmLatestVer,
+      sources: ver.sources,
+      pluginCount: plugins.length,
+      plugins: plugins.map((p) => p.name),
+    })
+  );
+  process.exit(0);
+}
+
+// 执行更新流程
+async function main() {
+  const startAt = Date.now();
+  emitProgress(10, "正在检查版本与环境", "获取官方 NPM 发行状态…");
+
+  const ver = await getVersions();
+  const pkgPath = join(RUNTIME_DIR, "package.json");
+
+  // 1. 更新 DSH 运行时
+  let installErrMsg = "";
+  let engineUpgraded = false;
+  if (isForce) {
+    emitProgress(35, "自研扩展快速构建", "跳过官方引擎检查，直接构建自研插件…");
+  } else if (ver.hasUpdate && ver.pendingPublish) {
+    // GitHub 已发布但 NPM 尚未同步：不要写 package.json，避免留下装不上的假版本
+    installErrMsg =
+      `官方 v${ver.latestVer} 已在 GitHub 发布，但 NPM 仓库（含镜像）尚未同步到该版本，` +
+      `已保留当前版本 v${ver.currentVer}，稍后重试即可`;
+    emitProgress(35, "新版本尚未同步至 NPM", installErrMsg);
+  } else if (ver.hasUpdate) {
+    emitProgress(25, "发现新版本，正在拉取更新", `${ver.currentVer} → ${ver.latestVer}`);
+    if (existsSync(pkgPath)) {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+      const originalVer = pkg.dependencies?.["@deepseek-ai/dsh"] || ver.currentVer;
+      pkg.dependencies["@deepseek-ai/dsh"] = ver.latestVer;
+      writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+
+      let installOk = false;
+      let errOut = "";
+      try {
+        execSync("npm install", { cwd: RUNTIME_DIR, stdio: "pipe", timeout: 120000 });
+        installOk = true;
+      } catch (e) {
+        errOut = (e.stderr?.toString() || e.stdout?.toString() || e.message || "").trim();
+        // 若当前配置的镜像源暂未同步或报 notarget/ETARGET，自动尝试直连官方 npm 源重试
+        try {
+          emitProgress(28, "正在从官方源重试拉取", `直连官方 NPM 获取 v${ver.latestVer}…`);
+          execSync("npm install --registry=https://registry.npmjs.org", { cwd: RUNTIME_DIR, stdio: "pipe", timeout: 180000 });
+          installOk = true;
+        } catch (e2) {
+          errOut = (e2.stderr?.toString() || e2.stdout?.toString() || e2.message || errOut).trim();
+        }
+      }
+
+      // 关键：不信 npm 的退出码，复读一次磁盘上的真实版本才算升级成功。
+      if (installOk) {
+        const afterVer = readInstalledVersion();
+        if (cmpVer(afterVer, ver.currentVer) > 0) {
+          engineUpgraded = true;
+        } else {
+          installOk = false;
+          errOut = errOut || `安装命令返回成功，但磁盘上仍是 v${afterVer}`;
+        }
+      }
+
+      if (!engineUpgraded) {
+        // 关键保护：安装失败立刻还原 package.json，绝不残留未安装的假版本
+        pkg.dependencies["@deepseek-ai/dsh"] = originalVer;
+        writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+
+        if (errOut.includes("notarget") || errOut.includes("ETARGET") || errOut.includes("E404")) {
+          const missing = errOut.split("\n").find((l) => l.includes("No matching version"))?.trim() || "部分兄弟包缺失";
+          installErrMsg = `官方 v${ver.latestVer} 仍在分批发布，依赖包尚未齐备（${missing}），已保留当前稳定版本 v${originalVer}`;
+          // 记下这次的目标版本：官方补齐之前在 UI 上提示分批发布中
+          patchState({ pendingDepsFor: ver.latestVer, pendingDepsAt: Date.now() });
+        } else {
+          installErrMsg = `官方引擎拉取异常: ${errOut.split("\n")[0] || "未知错误"}，已保留当前版本 v${originalVer}`;
+        }
+        emitProgress(30, "引擎未升级", installErrMsg);
+      } else {
+        emitProgress(40, "官方引擎已升级", `v${ver.currentVer} → v${ver.latestVer}`);
+        patchState({ pendingDepsFor: null, pendingDepsAt: null });
+      }
+    }
+  } else {
+    emitProgress(35, "官方运行时已是最新", `当前版本: v${ver.currentVer}`);
+  }
+
+  // 2. 上游子进程隐藏语义由 DSH 运行时自己负责，此处不再注入任何补丁。
+  // 历史补丁（windowsHide / CREATE_NO_WINDOW）已证明：改 node_modules 不持久、随升级失效，
+  // 且 CREATE_NO_WINDOW 与上游设计相悖（受限令牌下会导致 DLL 初始化失败）。详见 main.js。
+
+  // 3. 批量构建插件
+  const plugins = getPluginDirs();
+  const total = plugins.length;
+  let idx = 0;
+
+  for (const p of plugins) {
+    idx++;
+    const currentPercent = 50 + Math.floor((idx / total) * 45);
+    emitProgress(currentPercent, `正在构建自研插件 [${idx}/${total}]`, p.name);
+    try {
+      execSync("node build.mjs", { cwd: p.path, stdio: "ignore" });
+    } catch (e) {
+      emitProgress(currentPercent, `插件 [${p.name}] 构建提示`, e.message);
+    }
+  }
+
+  const durationSec = ((Date.now() - startAt) / 1000).toFixed(1);
+  const nowStr = formatDateTime(new Date());
+  saveLastUpdatedTime(nowStr);
+
+  // 引擎是否真的换掉了：读回磁盘上的真实版本，不采信 npm 的退出码
+  const engineVersionNow = readInstalledVersion();
+  engineUpgraded = cmpVer(engineVersionNow, ver.currentVer) > 0;
+
+  const doneTitle = isForce
+    ? "自研插件重新编译完成"
+    : (installErrMsg ? "自研插件已更新 · 引擎未升级" : "一键更新全部完成");
+  const doneDetail = installErrMsg
+    ? `插件构建完成（${installErrMsg}），耗时: ${durationSec} 秒`
+    : `耗时: ${durationSec} 秒`;
+
+  emitProgress(100, doneTitle, doneDetail);
+
+  if (isStreamJson) {
+    console.log(
+      JSON.stringify({
+        type: "done",
+        // 引擎没升上去就不是「全部完成」——UI 不能再拿它当成功横幅
+        success: !installErrMsg,
+        force: isForce,
+        engineUpgraded,
+        engineVersion: engineVersionNow,
+        engineError: installErrMsg,
+        duration: durationSec,
+        lastUpdated: nowStr,
+        officialReleaseTime: ver.officialReleaseTime,
+        message: installErrMsg
+          ? `自研插件构建完成（${installErrMsg}）`
+          : (isForce ? "自研插件重新编译完成" : "一键更新全部完成"),
+      })
+    );
+  }
+}
+
+main();

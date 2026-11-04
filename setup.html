@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;" />
+<title>DeepSeek Harness 安装程序</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    user-select: none; -webkit-user-select: none;
+    color: #1f1f1f;
+  }
+  /* 拖拽：整张卡片可拖（输入框/按钮除外） */
+  #card { -webkit-app-region: drag; }
+  #card input, #card button, #card .no-drag { -webkit-app-region: no-drag; }
+
+  body { display: flex; align-items: center; justify-content: center; }
+  #card {
+    width: 560px; height: 400px;
+    background: #ffffff;
+    border-radius: 20px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    box-shadow: 0 24px 64px -12px rgba(0, 0, 0, 0.28), 0 4px 16px rgba(0, 0, 0, 0.08);
+    display: flex; overflow: hidden;
+    position: relative;
+    animation: cardIn 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes cardIn {
+    from { opacity: 0; transform: scale(0.96) translateY(10px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  /* 左侧品牌区 */
+  #brand {
+    width: 190px; flex: none;
+    background: linear-gradient(165deg, #f2f6fd 0%, #ffffff 45%, #f6f1fd 100%);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 40px 16px 20px;
+    border-right: 1px solid rgba(0, 0, 0, 0.06);
+  }
+  #whale {
+    width: 72px; height: 72px; border-radius: 20px;
+    background: #ffffff;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    box-shadow: 0 8px 24px rgba(26, 115, 232, 0.14);
+    display: flex; align-items: center; justify-content: center;
+    color: #111;
+  }
+  #brand h1 { font-size: 17px; font-weight: 700; margin-top: 14px; text-align: center; line-height: 1.35; letter-spacing: 0.01em; }
+  #brand p { font-size: 11.5px; color: #5f6368; margin-top: 6px; }
+  #ver { margin-top: auto; font-size: 10.5px; color: #9aa0a6; font-family: ui-monospace, Consolas, monospace; }
+
+  /* 右侧内容区 */
+  #main { flex: 1; display: flex; flex-direction: column; padding: 22px 24px 18px; min-width: 0; }
+  #close {
+    position: absolute; top: 10px; right: 10px;
+    width: 30px; height: 30px; border: none; border-radius: 50%;
+    background: transparent; color: #5f6368; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  #close:hover { background: rgba(0,0,0,0.07); color: #1f1f1f; }
+  .view { display: none; flex-direction: column; flex: 1; min-height: 0; }
+  .view.active { display: flex; animation: viewIn 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+  @keyframes viewIn { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
+  h2 { font-size: 18px; font-weight: 650; letter-spacing: 0.01em; }
+  .sub { font-size: 12.5px; color: #5f6368; margin-top: 6px; line-height: 1.6; }
+
+  #path-row { display: flex; gap: 8px; margin-top: 14px; }
+  #path {
+    flex: 1; min-width: 0; height: 34px; padding: 0 12px;
+    border: 1px solid rgba(0,0,0,0.14); border-radius: 10px;
+    font: 12.5px ui-monospace, Consolas, monospace; color: #1f1f1f;
+    background: #f8f9fa; outline: none;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  #path:focus { border-color: #1a73e8; background: #fff; }
+  #browse {
+    flex: none; height: 34px; padding: 0 14px;
+    border: 1px solid rgba(0,0,0,0.1); border-radius: 10px;
+    background: #f1f3f4; color: #1f1f1f; font-size: 12.5px; cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  #browse:hover { background: #e4e7ea; }
+  #opts { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  .opt {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 12.5px; color: #3c4043; cursor: pointer;
+    padding: 7px 10px; border-radius: 9px;
+    transition: background 0.13s ease;
+  }
+  .opt:hover { background: rgba(26, 115, 232, 0.06); }
+  .opt input { accent-color: #1a73e8; width: 15px; height: 15px; cursor: pointer; }
+  #space { font-size: 11.5px; color: #9aa0a6; margin-top: 10px; }
+
+  /* 进度 */
+  #bar-bg { height: 8px; border-radius: 99px; background: rgba(0,0,0,0.08); margin-top: 18px; overflow: hidden; }
+  #bar { height: 100%; width: 0%; border-radius: 99px; background: linear-gradient(90deg, #1a73e8, #7baaf7); transition: width 0.18s ease; }
+  #pct-row { display: flex; justify-content: space-between; align-items: baseline; margin-top: 8px; }
+  #pct { font: 600 13px ui-monospace, Consolas, monospace; color: #1a73e8; }
+  #ticker { font-size: 11.5px; color: #5f6368; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px; }
+  #done-icon {
+    width: 52px; height: 52px; border-radius: 50%;
+    background: rgba(52, 168, 83, 0.12); color: #34a853;
+    display: flex; align-items: center; justify-content: center;
+    margin: 14px 0 6px;
+    animation: popIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes popIn { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  #err-box {
+    display: none; margin-top: 12px; padding: 9px 12px; border-radius: 10px;
+    background: rgba(220, 38, 38, 0.07); border: 1px solid rgba(220, 38, 38, 0.25);
+    color: #b3261e; font-size: 12px; line-height: 1.55; word-break: break-all;
+    max-height: 96px; overflow: auto;
+  }
+
+  #footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: auto; padding-top: 14px; }
+  .btn {
+    height: 34px; padding: 0 22px; border-radius: 999px; font-size: 13px; font-weight: 550;
+    cursor: pointer; border: none; transition: opacity 0.15s ease, transform 0.1s ease, background 0.15s ease;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn-primary { background: #1a73e8; color: #fff; box-shadow: 0 4px 14px rgba(26, 115, 232, 0.32); }
+  .btn-primary:hover { background: #1765cc; }
+  .btn-primary:disabled { opacity: 0.55; cursor: default; box-shadow: none; }
+  .btn-ghost { background: transparent; color: #5f6368; }
+  .btn-ghost:hover { background: rgba(0,0,0,0.06); color: #1f1f1f; }
+</style>
+</head>
+<body>
+  <div id="card">
+    <div id="brand">
+      <div id="whale">
+        <svg viewBox="0 0 60 36" width="40" height="24" fill="currentColor"><path d="M55.6128,3.4712c-.5953-.2917-.8517.2642-1.1998.5466-.1191.0911-.2198.2095-.3206.3188-.8701.9292-1.8867,1.5398-3.2148,1.4668-1.9417-.1094-3.5995.5012-5.065,1.9863-.3114-1.8313-1.3463-2.9248-2.9217-3.6262-.8242-.3645-1.6577-.729-2.2348-1.5217-.403-.5647-.5129-1.1934-.7144-1.813-.1283-.3735-.2565-.7563-.687-.8201-.4671-.0728-.6503.3188-.8335.647-.7327,1.3394-1.0166,2.8154-.9892,4.3096.0641,3.3621,1.4838,6.0406,4.3047,7.9449.3206.2187.403.4372.3023.7563-.1924.656-.4214,1.2937-.6228,1.9497-.1283.4192-.3207.5103-.7694.3279-1.5479-.6467-2.8852-1.6035-4.0667-2.7605-2.0058-1.9407-3.8193-4.0818-6.0815-5.7583-.5312-.3918-1.0625-.7561-1.6121-1.1025-2.3081-2.2412.3023-4.0818.9068-4.3003.6319-.2278.2198-1.0115-1.8227-1.0022-2.0425.009-3.9109.6924-6.2922,1.6035-.348.1367-.7145.2368-1.09.3188-2.1615-.4099-4.4055-.5012-6.7502-.2368-4.4147.4919-7.9408,2.5784-10.5328,6.1409C.1914,13.1289-.5413,17.9941.3563,23.0691c.9434,5.3481,3.6727,9.7761,7.8676,13.2385,4.3506,3.5896,9.3606,5.3481,15.0758,5.011,3.4713-.2004,7.3364-.665,11.6961-4.355,1.099.5467,2.2531.7652,4.1674.9292,1.4746.1367,2.8943-.0728,3.9933-.3005,1.7219-.3645,1.6029-1.959.9801-2.2505-5.0466-2.3506-3.9385-1.394-4.9459-2.1685,2.5645-3.0339,6.4297-6.1865,7.9409-16.4001.119-.8108.0183-1.3211,0-1.9771-.0092-.4008.0824-.5556.5404-.6013,1.2639-.1458,2.4912-.4919,3.6178-1.1115,3.2698-1.7857,4.5886-4.7195,4.9-8.2364.0459-.5376-.0091-1.0935-.577-1.3757ZM27.119,35.123c-4.8909-3.8447-7.263-5.1113-8.2431-5.0566-.9159.0547-.751,1.1025-.5496,1.7859.2107.6741.4855,1.1389.8701,1.731.2656.3918.4489.9748-.2655,1.4123-1.5754.9749-4.314-.3281-4.4423-.3918-3.1872-1.877-5.8525-4.3553-7.7302-7.7444-1.8135-3.262-2.8667-6.7605-3.0408-10.4961-.0458-.9019.2198-1.221,1.1174-1.3848,1.1815-.2187,2.3997-.2644,3.5812-.0913,4.9918.729,9.2415,2.9612,12.8043,6.4963,2.0333,2.0135,3.572,4.419,5.1566,6.7696,1.6852,2.4963,3.4987,4.8745,5.8068,6.8242.8151.6833,1.4654,1.2026,2.0882,1.5854-1.8775.2095-5.01.2552-7.1532-1.4397Z"/></svg>
+      </div>
+      <h1>DeepSeek<br />Harness</h1>
+      <p>桌面壳 · 开箱即用</p>
+      <span id="ver">v1.2.0</span>
+    </div>
+    <div id="main">
+      <button id="close" title="取消安装"><svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 2l10 10M12 2L2 12"/></svg></button>
+
+      <div class="view active" id="view-welcome">
+        <h2>欢迎使用</h2>
+        <p class="sub">默认安装到 <b>D 盘</b>，可自行更改路径。<br />约需 600 MB 磁盘空间，1 分钟内完成。</p>
+        <div id="path-row">
+          <input id="path" class="no-drag" spellcheck="false" value="D:\DeepSeek Harness" />
+          <button id="browse" class="no-drag">浏览…</button>
+        </div>
+        <div id="opts">
+          <label class="opt no-drag"><input type="checkbox" id="opt-desktop" checked /> 创建桌面快捷方式</label>
+          <label class="opt no-drag"><input type="checkbox" id="opt-start" checked /> 创建开始菜单快捷方式</label>
+          <label class="opt no-drag"><input type="checkbox" id="opt-run" checked /> 完成后启动应用</label>
+        </div>
+        <div id="space">已检测到 D 盘，将默认安装到 D:\DeepSeek Harness</div>
+        <div id="footer">
+          <button class="btn btn-ghost" id="btn-cancel">取消</button>
+          <button class="btn btn-primary" id="btn-install">安装</button>
+        </div>
+      </div>
+
+      <div class="view" id="view-progress">
+        <h2 id="prog-title">正在安装…</h2>
+        <p class="sub" id="prog-sub">正在解压应用文件，请稍候。</p>
+        <div id="bar-bg"><div id="bar"></div></div>
+        <div id="pct-row"><span id="pct">0%</span><span id="ticker"></span></div>
+        <div id="err-box"></div>
+        <div id="footer">
+          <button class="btn btn-ghost" id="btn-close2" style="display:none">关闭</button>
+        </div>
+      </div>
+
+      <div class="view" id="view-done">
+        <div id="done-icon"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg></div>
+        <h2>安装完成</h2>
+        <p class="sub" id="done-sub">已安装到 D:\DeepSeek Harness</p>
+        <div id="footer">
+          <button class="btn btn-ghost" id="btn-close3">关闭</button>
+          <button class="btn btn-primary" id="btn-launch">立即启动</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="setup-renderer.js"></script>
+</body>
+</html>
