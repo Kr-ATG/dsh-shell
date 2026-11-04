@@ -1835,7 +1835,8 @@ function rebuildTrayMenu() {
     },
     ...safeBootItems,
     {
-      label: "更新自研插件套件",
+      label: "更新自研插件套件（已停用）",
+      enabled: false,
       click: async () => {
         if (isDevLayout()) {
           // 开发机是 link: 布局：npm 版会与本地依赖打架，明确拒绝而不是静默改环境
@@ -1946,7 +1947,10 @@ function killPort3080() {
 // 注意与开发机的区别：开发机 profile 里是裸名 + link: 本地依赖，运行时模式从
 // npm 装的是 @kr-atg/<name>，因此这里用 scope 名做体检与注册。
 // dsh-provider-hub 暂不进分发清单（私有仓库，等作者决定公开发布）。
-const KR_PLUGINS = ["@kr-atg/dsh-triad", "@kr-atg/dsh-chat-plus", "@kr-atg/dsh-companion"];
+// 2026-11-04：按用户要求，自研三件套（triad / chat-plus / companion）不再随壳自动部署，
+// 用户只保留 dsh-seeker-bot。置空后 inspectPlugins() 恒为 ok，启动时的自愈部署不会触发，
+// 也不会再改写 profile/package.json。
+const KR_PLUGINS = [];
 // 本地源码名 → npm scope 名（下载 zip 兜底链路里 manifest 用的是源码名）
 const KR_LOCAL_NAME = { "@kr-atg/dsh-triad": "dsh-triad", "@kr-atg/dsh-chat-plus": "dsh-chat-plus", "@kr-atg/dsh-companion": "dsh-companion" };
 function krPluginDir() {
