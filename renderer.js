@@ -243,12 +243,22 @@ function revealAndGlideDown() {
   setTimeout(() => {
     // 触发搜索框向下平滑滑动到聊天输入框位置
     if (searchStage) searchStage.classList.add("gliding-down");
+    /*
+     * 入场这 520ms 临时借一个合成层，保证 opacity/transform 动画不掉帧；
+     * 落位后必须清掉 —— iframe 常驻 transform/will-change 会永久留在合成层里，
+     * Electron 下 iframe 内部滚动会走慢路径（浏览器直开正常、壳子里像掉帧的根因）。
+     */
+    if (frame) frame.style.willChange = "opacity, transform";
     // 同时平滑展开主页面 WebUI
     document.body.classList.add("page-revealed");
 
     setTimeout(() => {
       stageState = "done";
       if (searchStage) searchStage.classList.add("done");
+      if (frame) {
+        frame.style.willChange = "auto";
+        frame.style.transform = "none";
+      }
     }, 650);
   }, 180);
 }

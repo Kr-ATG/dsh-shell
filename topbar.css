@@ -218,6 +218,14 @@ html.is-maximized #win-max .win-ico-restore { display: block; }
   background: var(--shell-bg);
 }
 
+/*
+ * 主 WebUI iframe。
+ *
+ * 这里**不能常驻 transform / will-change**：它们会把整个 iframe 提升成一个
+ * 大合成层，Electron 里还会让 iframe 内部的原生滚动/合成走慢路径——表现就是
+ * 「浏览器里顺滑、装进壳子却像游戏掉帧」。入场时短暂借用图层，落位后由
+ * renderer.js 清掉 transform 与 will-change，让 iframe 回到普通合成路径。
+ */
 #dsh-frame {
   position: absolute;
   inset: 0;
@@ -229,12 +237,11 @@ html.is-maximized #win-max .win-ico-restore { display: block; }
   transform: scale(0.995);
   transition: opacity 0.52s cubic-bezier(0.16, 1, 0.3, 1),
               transform 0.52s cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: opacity, transform;
 }
 
 body.page-revealed #dsh-frame {
   opacity: 1;
-  transform: scale(1);
+  transform: none;
 }
 
 /* 异常容错遮罩 */
